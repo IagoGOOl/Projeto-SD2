@@ -1,0 +1,193 @@
+import os
+import socket
+import threading
+from pathlib import Path
+
+class FileSharingClient:
+    def __init__(self, server_host='localhost', server_port=1234, client_port=1235, public_dir='public'):
+        self.server_host = server_host
+        self.server_port = server_port
+        self.client_port = client_port
+        self.public_dir = public_dir
+        self.server_socket = None
+        self.client_socket = None
+        self.listener_socket = None
+        self.running = False
+        self.ensure_public_dir()
+        
+    def ensure_public_dir(self):
+        Path(self.public_dir).mkdir(exist_ok=True)
+        
+    def start(self):
+        
+        self.connect_to_server()
+        
+        
+        self.start_listener()
+        
+        try:
+            while self.running:
+                command = input("Comando (SEARCH <pattern>, LIST, LEAVE): ").strip()
+                
+                if command.lower() == 'leave':
+                    self.send_command("LEAVE")
+                    break
+                elif command.lower() == 'list':
+                    self.list_local_files()
+                elif command.lower().startswith('search'):
+                    self.send_command(command)
+                elif command.lower().startswith('download'):
+                    self.handle_download_command(command)
+                else:
+                    print("Comando inválido")
+                    
+        except KeyboardInterrupt:
+            print("\nEncerrando cliente...")
+        finally:
+            self.cleanup()
+            
+    def connect_to_server(self):
+        try:
+            self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            self.server_socket.connect((self.server_host, self.server_port))
+            self.running = True
+            
+            
+            local_ip = socket.gethostbyname(socket.gethostname())
+            
+            
+            self.send_command(f"JOIN {local_ip}")
+            
+            self.send_file_list()
+            
+        except Exception as e:
+            print(f"Erro ao conectar ao servidor: {e}")
+            self.running = False
+            
+    def send_command(self, command):
+        try:
+            self.server_socket.send(command.encode())
+            response = self.server_socket.recv(1024).decode().strip()
+            self.handle_server_response(response)
+        except Exception as e:
+            print(f"Erro ao enviar comando: {e}")
+            
+    def handle_server_response(self, response):
+        if response.startswith("FILE"):
+            files = response.split('\n')
+            print("\nResultados da busca:")
+            for i, file_info in enumerate(files, 1):
+                parts = file_info.split()
+                if len(parts) >= 4:
+                    print(f"{i}. {parts[1]} (Tamanho: {parts[3]} bytes) - IP: {parts[2]}")
+        else:
+            print(f"Resposta do servidor: {response}")
+            
+    def send_file_list(self):
+        try:
+            for file in Path(self.public_dir).iterdir():
+                if file.is_file():
+                    self.send_command(f"CREATEFILE {file.name} {file.stat().st_size}")
+        except Exception as e:
+            print(f"Erro ao enviar lista de arquivos: {e}")
+            
+    def list_local_files(self):
+        print("\nArquivos locais na pasta public:")
+        for i, file in enumerate(Path(self.public_dir).iterdir(), 1):
+            if file.is_file():
+                print(f"{i}. {file.name} (Tamanho: {file.stat().st_size} bytes)")
+                
+    def start_listener(self):
+        def listener():
+            self.listener_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            self.listener_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            self.listener_socket.bind(('0.0.0.0', self.client_port))
+            self.listener_socket.listen(5)
+            
+            while self.running:
+                try:
+                    conn, addr = self.listener_socket.accept()
+                    threading.Thread(
+                        target=self.handle_download_request,
+                        args=(conn, addr),
+                        daemon=True
+                    ).start()
+                except:
+                    break
+                    
+        threading.Thread(target=listener, daemon=True).start()
+        print(f"Ouvindo conexões de download na porta {self.client_port}")
+        
+    def handle_download_request(self, conn, addr):
+        try:
+            data = conn.recv(1024).decode().strip()
+            if data.startswith("GET"):
+                parts = data.split()
+                if len(parts) >= 2:
+                    filename = parts[1]
+                    file_path = Path(self.public_dir) / filename
+                    
+                    if file_path.is_file():
+                        with open(file_path, 'rb') as f:
+                            conn.sendfile(f)
+                        print(f"Arquivo {filename} enviado para {addr[0]}")
+                    else:
+                        conn.send(b"ERROR File not found")
+        except Exception as e:
+            print(f"Erro ao lidar com download: {e}")
+        finally:
+            conn.close()
+            
+    def handle_download_command(self, command):
+        parts = command.split()
+        if len(parts) < 3:
+            print("Uso: download <número do arquivo> <ip>")
+            return
+            
+        try:
+            file_num = int(parts[1])
+            ip_address = parts[2]
+            
+            self.send_command("SEARCH ")
+            response = self.server_socket.recv(4096).decode().strip()
+            
+            if response.startswith("FILE"):
+                files = response.split('\n')
+                if 1 <= file_num <= len(files):
+                    selected_file = files[file_num-1].split()
+                    filename = selected_file[1]
+                    
+                    
+                    download_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                    download_socket.connect((ip_address, self.client_port))
+                    
+                    
+                    download_socket.send(f"GET {filename}".encode())
+                    
+                    
+                    save_path = Path(self.public_dir) / filename
+                    with open(save_path, 'wb') as f:
+                        while True:
+                            data = download_socket.recv(4096)
+                            if not data:
+                                break
+                            f.write(data)
+                            
+                    print(f"Arquivo {filename} baixado com sucesso!")
+                    file_size = save_path.stat().st_size
+                    self.send_command(f"CREATEFILE {filename} {file_size}")
+                else:
+                    print("Número de arquivo inválido")
+            else:
+                print("Nenhum arquivo disponível para download")
+                
+        except Exception as e:
+            print(f"Erro ao baixar arquivo: {e}")
+            
+    def cleanup(self):
+        self.running = False
+        if self.server_socket:
+            self.server_socket.close()
+        if self.listener_socket:
+            self.listener_socket.close()
+        print("Cliente encerrado")
