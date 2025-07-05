@@ -19,12 +19,12 @@ def handle_client(client_socket, client_address):
             print(f"Recebido de {client_address}: {data}")
             parts = data.split()
 
-            if parts[0] == "JOIN":
+            if parts[0].upper() == "JOIN":
                 ip_address = parts[1]
                 all_files[ip_address] = []
                 client_socket.send(b"CONFIRMJOIN\n")
 
-            elif parts[0] == "CREATEFILE":
+            elif parts[0].upper() == "CREATEFILE":
                 filename = parts[1]
                 size = int(parts[2])
                 file_info = {"filename": filename, "size": size}
@@ -32,7 +32,7 @@ def handle_client(client_socket, client_address):
                 response = f"CONFIRMCREATEFILE {filename}\n"
                 client_socket.send(response.encode())
 
-            elif parts[0] == "DELETEFILE":
+            elif parts[0].upper() == "DELETEFILE":
                 filename = parts[1]
                 all_files[ip_address] = [
                     f for f in all_files[ip_address] if f["filename"] != filename
@@ -40,13 +40,13 @@ def handle_client(client_socket, client_address):
                 response = f"CONFIRMDELETEFILE {filename}\n"
                 client_socket.send(response.encode())
 
-            elif parts[0] == "LEAVE":
+            elif parts[0].upper() == "LEAVE":
                 if ip_address in all_files:
                     del all_files[ip_address]
                 client_socket.send(b"CONFIRMLEAVE\n")
                 break
 
-            elif parts[0] == "SEARCH":
+            elif parts[0].upper() == "SEARCH":
                 if len(parts) < 2:
                     client_socket.send(b"ERROR Missing search pattern\n")
                     return  # ou continue se estiver dentro de um loop
@@ -65,6 +65,7 @@ def handle_client(client_socket, client_address):
                     client_socket.send(response.encode())
                 else:
                     client_socket.send(b"NORESULT\n")
+
     except ConnectionResetError:
         print(f"Conexão com {client_address} perdida.")
     finally:
