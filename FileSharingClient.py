@@ -27,7 +27,7 @@ class FileSharingClient:
         
         try:
             while self.running:
-                command = input("Comando (SEARCH <pattern>, LIST, LEAVE): ").strip()
+                command = input("Comando (SEARCH <pattern>, LIST, DOWNLOAD <num> <ip>, DELETE <filename>, LEAVE): ").strip()
                 
                 if command.lower() == 'leave':
                     self.send_command("LEAVE")
@@ -38,6 +38,8 @@ class FileSharingClient:
                     self.send_command(command)
                 elif command.lower().startswith('download'):
                     self.handle_download_command(command)
+                elif command.lower().startswith('delete'):
+                    self.handle_delete_command(command)
                 else:
                     print("Comando inválido")
                     
@@ -183,6 +185,29 @@ class FileSharingClient:
                 
         except Exception as e:
             print(f"Erro ao baixar arquivo: {e}")
+
+    def handle_delete_command(self, command):
+        parts = command.split(maxsplit=1)
+        if len(parts) != 2:
+            print("Uso: delete <nome-do-arquivo>")
+            return
+
+        filename = parts[1]
+        file_path = Path(self.public_dir) / filename
+
+        if not file_path.is_file():
+            print(f"Arquivo '{filename}' não encontrado na pasta '{self.public_dir}'")
+            return
+
+        try:
+            # Envia comando DELETEFILE ao servidor
+            self.send_command(f"DELETEFILE {filename}")
+
+            # Remove o arquivo localmente
+            file_path.unlink()
+            print(f"Arquivo '{filename}' removido localmente e do servidor.")
+        except Exception as e:
+            print(f"Erro ao remover arquivo: {e}")
             
     def cleanup(self):
         self.running = False
@@ -191,3 +216,7 @@ class FileSharingClient:
         if self.listener_socket:
             self.listener_socket.close()
         print("Cliente encerrado")
+
+if __name__ == "__main__":
+    client = FileSharingClient()
+    client.start()
