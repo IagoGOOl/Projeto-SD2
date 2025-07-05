@@ -47,18 +47,24 @@ def handle_client(client_socket, client_address):
                 break
 
             elif parts[0] == "SEARCH":
+                if len(parts) < 2:
+                    client_socket.send(b"ERROR Missing search pattern\n")
+                    return  # ou continue se estiver dentro de um loop
+
                 pattern = parts[1]
                 result = []
                 for ip, files in all_files.items():
                     for file in files:
                         if pattern in file["filename"]:
                             result.append(
-                                f"FILE {file['filename']} {ip} {file['size']}\n"
+                                f"FILE {file['filename']} {ip} {file['size']}"
                             )
-                for line in result:
-                    client_socket.send(line.encode())
-                # Você pode adicionar uma linha final para indicar o fim da busca
-                client_socket.send(b"\n")
+                
+                if result:
+                    response = '\n'.join(result) + '\n'
+                    client_socket.send(response.encode())
+                else:
+                    client_socket.send(b"NORESULT\n")
     except ConnectionResetError:
         print(f"Conexão com {client_address} perdida.")
     finally:

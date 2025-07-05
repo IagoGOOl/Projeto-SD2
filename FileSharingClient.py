@@ -4,7 +4,7 @@ import threading
 from pathlib import Path
 
 class FileSharingClient:
-    def __init__(self, server_host='localhost', server_port=1234, client_port=1235, public_dir='public'):
+    def __init__(self, server_host, server_port=1234, client_port=1235, public_dir='public'):
         self.server_host = server_host
         self.server_port = server_port
         self.client_port = client_port
@@ -150,7 +150,7 @@ class FileSharingClient:
             file_num = int(parts[1])
             ip_address = parts[2]
             
-            self.send_command("SEARCH ")
+            self.server_socket.send(b"SEARCH .")
             response = self.server_socket.recv(4096).decode().strip()
             
             if response.startswith("FILE"):
@@ -218,5 +218,7 @@ class FileSharingClient:
         print("Cliente encerrado")
 
 if __name__ == "__main__":
-    client = FileSharingClient()
+    ip = input("Digite o IP do servidor: ").strip()
+    client = FileSharingClient(server_host=ip)
     client.start()
+
