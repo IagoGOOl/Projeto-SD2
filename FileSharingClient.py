@@ -128,11 +128,37 @@ class FileSharingClient:
                 if len(parts) >= 2:
                     filename = parts[1]
                     file_path = Path(self.public_dir) / filename
-                    
+
+                    start = 0
+                    end = None  # até o fim do arquivo
+
+                    if len(parts) >= 3:
+                        try:
+                            start = int(parts[2])
+                        except ValueError:
+                            start = 0
+
+                    if len(parts) == 4 and parts[3].isdigit():
+                        end = int(parts[3])
+
                     if file_path.is_file():
                         with open(file_path, 'rb') as f:
-                            conn.sendfile(f)
-                        print(f"Arquivo {filename} enviado para {addr[0]}")
+                            f.seek(start)
+                            remaining = end - start if end is not None else None
+                            chunk_size = 4096
+
+                            while True:
+                                if remaining is not None and remaining <= 0:
+                                    break
+                                to_read = min(chunk_size, remaining) if remaining else chunk_size
+                                data = f.read(to_read)
+                                if not data:
+                                    break
+                                conn.sendall(data)
+                                if remaining:
+                                    remaining -= len(data)
+
+                        print(f"Arquivo {filename} (offset {start} até {end}) enviado para {addr[0]}")
                     else:
                         conn.send(b"ERROR File not found")
         except Exception as e:
@@ -143,46 +169,72 @@ class FileSharingClient:
     def handle_download_command(self, command):
         parts = command.split()
         if len(parts) < 3:
-            print("Uso: download <número do arquivo> <ip>")
+            print("Uso: download <número do arquivo> <ip> [start] [end]")
             return
-            
+
         try:
             file_num = int(parts[1])
             ip_address = parts[2]
-            
+            start = int(parts[3]) if len(parts) >= 4 else 0
+            end = int(parts[4]) if len(parts) >= 5 else None
+
             self.server_socket.send(b"SEARCH .")
-            response = self.server_socket.recv(4096).decode().strip()
-            
-            if response.startswith("FILE"):
-                files = response.split('\n')
-                if 1 <= file_num <= len(files):
-                    selected_file = files[file_num-1].split()
-                    filename = selected_file[1]
-                    
-                    
-                    download_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                    download_socket.connect((ip_address, self.client_port))
-                    
-                    
-                    download_socket.send(f"GET {filename}".encode())
-                    
-                    
-                    save_path = Path(self.public_dir) / filename
-                    with open(save_path, 'wb') as f:
-                        while True:
-                            data = download_socket.recv(4096)
-                            if not data:
-                                break
-                            f.write(data)
-                            
-                    print(f"Arquivo {filename} baixado com sucesso!")
-                    file_size = save_path.stat().st_size
-                    self.send_command(f"CREATEFILE {filename} {file_size}")
+            response = ""
+            while True:
+                chunk = self.server_socket.recv(4096).decode()
+                response += chunk
+                if not chunk or chunk.endswith("\n"):
+                    break
+
+            files = [line for line in response.split('\n') if line.startswith("FILE")]
+
+            if 1 <= file_num <= len(files):
+                selected_file = files[file_num - 1].split()
+                filename = selected_file[1]
+
+                save_path = Path(self.public_dir) / filename
+
+                # Detecta tamanho atual (caso exista)
+                if save_path.exists():
+                    existing_size = save_path.stat().st_size
+                    # Se o usuário não forneceu 'start', continua de onde parou
+                    if len(parts) < 4:
+                        start = existing_size
+                    elif start < existing_size:
+                        print(f"Parte do arquivo já baixada até o byte {existing_size}.")
+                        print("Remova o arquivo se quiser reiniciar o download.")
+                        return
                 else:
-                    print("Número de arquivo inválido")
+                    existing_size = 0
+
+                # Estabelece a conexão com o outro cliente
+                download_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                download_socket.connect((ip_address, self.client_port))
+
+                # Monta comando GET
+                if end is not None:
+                    get_command = f"GET {filename} {start} {end}"
+                else:
+                    get_command = f"GET {filename} {start}"
+
+                download_socket.send(get_command.encode())
+
+                # Abre arquivo em modo append binário para continuar o download
+                with open(save_path, 'ab') as f:
+                    while True:
+                        data = download_socket.recv(4096)
+                        if not data:
+                            break
+                        f.write(data)
+
+                print(f"Download de {filename} (offset {start} até {end or 'EOF'}) concluído!")
+
+                # Registra no servidor caso o download tenha sido completo
+                file_size = save_path.stat().st_size
+                self.send_command(f"CREATEFILE {filename} {file_size}")
             else:
-                print("Nenhum arquivo disponível para download")
-                
+                print("Número de arquivo inválido")
+
         except Exception as e:
             print(f"Erro ao baixar arquivo: {e}")
 
